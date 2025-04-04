@@ -10,25 +10,37 @@ client = OpenAI(
 )
 
 # 默认系统提示词
-DEFAULT_SYSTEM_PROMPT = """你现在是一个评论情感分析师。我会给你一系列带编号的评论，请你对每条评论从两个维度进行打分：情绪倾向(0-1)和情绪烈度(0-1)。
+DEFAULT_SYSTEM_PROMPT = """作为专业的情感分析模型，请按以下要求对带编号的评论进行精细评分：
 
-从以下两个维度给出评分：
+评分维度：
+1. 情绪倾向（0.00-1.00）：
+   - 0.00-0.30：明显负面（如愤怒、失望）
+   - 0.31-0.69：中性或混合情绪（需根据细微差别调整，如轻微负面0.45，轻微正面0.55）
+   - 0.70-1.00：明显正面（如赞扬、喜悦）
+   * 示例：讽刺性表扬应接近0.25，理性分析接近0.50
 
-情绪倾向：整条评论的情绪越消极分数越低（如失望、不满），越积极分数越高（如表扬、愉悦）。0表示完全消极，1表示完全积极。如果综合来看消极和积极情绪较中和，应打一个接近0.5的分数。
+2. 情绪强度（0.00-1.00）：
+   - 0.00-0.30：平和陈述/客观描述（如产品参数讨论）
+   - 0.31-0.70：带有情绪修饰（如"还不错"→0.4，"非常满意"→0.6）
+   - 0.71-1.00：强烈情感表达（如感叹号、质问、情绪化词汇）
 
-情绪强度：越能唤起读者情绪则分数也越高，越平和或理性分数越低。请屏蔽比喻的影响，越简单直接的情感宣泄此值越高，或是反问、讽刺，也会更容易唤起读者情绪。0表示完全平和，1表示非常强烈。
+评分规则：
+1. 必须保留两位小数（如0.25而非0.25）
+2. 优先使用中间值（如0.83比0.80更可取）
+3. 极端值(0.00/1.00)仅用于明确无误的情况
+4. 注意：
+   - 反问句强度≥0.65
+   - 连续感叹号每个增加0.15强度
+   - 理性分析倾向接近0.50，强度≤0.30
 
-如果作者在比较冷静地分析、探讨各方观点，则应当考虑给出适中地情绪倾向和较低地情绪强度。
-
-请直接返回json格式的分数结果，格式如下：
-
-JSON
+请返回严格遵循此结构的JSON：
 {
     "scores": [
-        {"id": 1, "sentiment": x.x, "intensity": x.x},
-        {"id": 2, "sentiment": x.x, "intensity": x.x}
+        {"id": 1, "sentiment": x.xx, "intensity": x.xx},
+        ...
     ]
 }"""
+
 
 def extract_response_data(response_text):
     """
@@ -55,20 +67,12 @@ def extract_response_data(response_text):
         
     return scores, thinking
 
-def emotional_score(sentiment, intensity):
+def emotional_score(valence, arousal):
     """
     将sentiment和intensity融合并映射到0-10分数区间
+    使用情绪煽动计算公式：arousal * (4 * (valence - 0.5)**2)
     """
-    normalized_sentiment = sentiment * 10
-    if intensity < 0.5:
-        intensity = - intensity
-    normalized_intensity = intensity 
-    if normalized_sentiment < 5:
-        emotional_score = normalized_sentiment - normalized_intensity
-    else:
-        emotional_score = normalized_sentiment + normalized_intensity
-    emotional_score = max(0, min(10, emotional_score))
-    return emotional_score
+    return arousal * (4 * (valence - 0.5)**2)
 
 def analyze_sentiment(messages, system_prompt=DEFAULT_SYSTEM_PROMPT):
     """
@@ -81,7 +85,7 @@ def analyze_sentiment(messages, system_prompt=DEFAULT_SYSTEM_PROMPT):
     """
     try:
         response = client.chat.completions.create(
-            model="deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",
+            model="deepseek-ai/DeepSeek-R1-Distill-Qwen-14B",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": "\n".join([f"{i+1}. {msg}" for i, msg in enumerate(messages)])}
@@ -124,7 +128,7 @@ if __name__ == "__main__":
     start_time = time.time()
     scores, thinking = analyze_sentiment(test_messages)
     end_time = time.time()
-    display_analysis(test_messages, scores, thinking, show_thinking=False)
+    display_analysis(test_messages, scores, thinking, show_thinking=True)
     print(f"平均每条评论处理时间：{(end_time - start_time)/len(test_messages):.2f}秒")
     
 
