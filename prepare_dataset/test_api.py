@@ -5,8 +5,10 @@ from openai import OpenAI
 
 # 初始化客户端
 client = OpenAI(
-    api_key="sk-taamkskxomltqzkeebgckdhihzrfkzxakjsvrgsckjubatpi",
+    api_key="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", # 替换成用户的硅基流动api
+    # api_key="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",
     base_url="https://api.siliconflow.cn/v1"
+    # base_url="https://openrouter.ai/api/v1"
 )
 
 # 默认系统提示词
@@ -33,46 +35,124 @@ DEFAULT_SYSTEM_PROMPT = """作为专业的情感分析模型，请按以下要�
    - 连续感叹号每个增加0.15强度
    - 理性分析倾向接近0.50，强度≤0.30
 
-请返回严格遵循此结构的JSON：
+请返回严格遵循此结构的JSON（不带json前缀，禁止输出除了json之外的任何文字）：
 {
     "scores": [
         {"id": 1, "sentiment": x.xx, "intensity": x.xx},
         ...
     ]
-}"""
+}
 
+请现在开始分析以下输入内容：
+"""
+
+# DEFAULT_SYSTEM_PROMPT = """作为专业的情感分析模型，你需要根据Russell情绪模型对输入的每句话进行情绪分类和分析。请严格使用以下26种情绪分类：
+
+# Happy
+# Delighted
+# Excited
+# Astonished
+# Aroused
+# Tense
+# Alarmed
+# Angry
+# Afraid
+# Annoyed
+# Distressed
+# Frustrated
+# Miserable
+# Sad
+# Gloomy
+# Depressed
+# Bored
+# Droopy
+# Tired
+# Sleepy
+# Calm
+# Serene
+# Pleased
+# Content
+# At Ease
+# Relaxed
+
+# 分析规则：
+# 1. 每句话可能包含1-3种主要情绪
+# 2. 为每种识别出的情绪分配一个占比值(0-1)，所有情绪占比总和为1
+# 3. 优先考虑最强烈/最明显的情绪，非必要不添加多个情绪
+# 4. 对于确实无明显情绪倾向的句子，选择最接近的低唤醒情绪（如Serene/Bored/Calm）
+# 5. 不可添加以上列举范围之外的情绪
+
+# 输出要求：
+# 对每句话输出一个JSON对象，包含：
+# - 原始文本引用
+# - 识别出的情绪及其占比（严格使用上述26种情绪）
+
+# 示例输出（不带json前缀，禁止输出除了json之外的任何文字）：
+# {
+#   "scores": [
+#     {"id": 1, "emotions": {"Happy": 0.3, "Excited": 0.7}},
+#     {"id": 2, "emotions": {"Angry": 1.0}},
+#     {"id": 3, "emotions": {"Calm": 0.5, "Content": 0.5}},
+#     {"id": 4, "emotions": {"Bored": 0.6, "Tired": 0.4}},
+#     {"id": 5, "emotions": {"Astonished": 0.5, "Afraid": 0.2, "Sad": 0.3}}
+#   ]
+# }
+
+
+# 请现在开始分析以下输入内容：
+# """
+
+
+# def extract_response_data(response_text):
+#     """
+#     从响应文本中提取批量评分结果和思考过程
+#     返回 (emotion_data, thinking)，其中emotion_data包含每条评论的emotions字典
+#     """
+#     scores = []
+#     thinking = None
+#     try:
+#         # 直接解析JSON响应
+#         data = json.loads(response_text)
+#         scores = data.get("scores", [])
+            
+#         # 提取思考过程
+#         think_match = re.search(r'<think>(.*?)</think>', response_text, re.DOTALL)
+#         if think_match:
+#             thinking = think_match.group(1).strip()
+#     except Exception as e:
+#         print(f"Error parsing response: {e}\nResponse text: {response_text}")
+        
+#     return scores, thinking
 
 def extract_response_data(response_text):
     """
     从响应文本中提取批量评分结果和思考过程
-    返回 (sentiment_data, thinking)，其中sentiment_data包含每条评论的sentiment和intensity
+    返回 (emotion_data, thinking)，其中emotion_data包含每条评论的情感和强度数据
     """
-    scores = []
+    emotion_data = []
     thinking = None
-    
     try:
-        # 提取分数
-        json_match = re.search(r'```json\s*({.*?})\s*```', response_text, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(1)
-            data = json.loads(json_str)
-            scores = data.get("scores", [])
+        # 直接解析JSON响应
+        data = json.loads(response_text)
+        scores = data.get("scores", [])
+        
+        # 提取每条评论的情感和强度数据
+        for score in scores:
+            entry = {
+                "id": score.get("id"),
+                "sentiment": score.get("sentiment"),
+                "intensity": score.get("intensity")
+            }
+            emotion_data.append(entry)
             
         # 提取思考过程
         think_match = re.search(r'<think>(.*?)</think>', response_text, re.DOTALL)
         if think_match:
             thinking = think_match.group(1).strip()
-    except:
-        pass
+    except Exception as e:
+        print(f"Error parsing response: {e}\nResponse text: {response_text}")
         
-    return scores, thinking
-
-def emotional_score(valence, arousal):
-    """
-    将sentiment和intensity融合并映射到0-10分数区间
-    使用情绪煽动计算公式：arousal * (4 * (valence - 0.5)**2)
-    """
-    return arousal * (4 * (valence - 0.5)**2)
+    return emotion_data, thinking
 
 def analyze_sentiment(messages, system_prompt=DEFAULT_SYSTEM_PROMPT):
     """
@@ -85,7 +165,8 @@ def analyze_sentiment(messages, system_prompt=DEFAULT_SYSTEM_PROMPT):
     """
     try:
         response = client.chat.completions.create(
-            model="deepseek-ai/DeepSeek-R1-Distill-Qwen-14B",
+            model="Qwen/Qwen2.5-14B-Instruct",
+            # model="deepseek/deepseek-r1-distill-qwen-14b",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": "\n".join([f"{i+1}. {msg}" for i, msg in enumerate(messages)])}
@@ -98,6 +179,19 @@ def analyze_sentiment(messages, system_prompt=DEFAULT_SYSTEM_PROMPT):
         print(f"API调用失败：{str(e)}")
         return [], None
 
+# def display_analysis(messages, scores, thinking, show_thinking=True):
+#     """
+#     显示批量分析结果
+#     """
+#     print(f"批量处理 {len(messages)} 条评论：")
+#     if show_thinking and thinking:
+#         print(f"思考过程：{thinking}")
+#     for msg, data in zip(messages, scores):
+#         print(f"\n{data['id']}. 评论：{msg}")
+#         print("   情绪成分分析：")
+#         for emotion, value in data['emotions'].items():
+#             print(f"   - {emotion}: {value:.2f}")
+
 def display_analysis(messages, scores, thinking, show_thinking=True):
     """
     显示批量分析结果
@@ -106,22 +200,18 @@ def display_analysis(messages, scores, thinking, show_thinking=True):
     if show_thinking and thinking:
         print(f"思考过程：{thinking}")
     for msg, data in zip(messages, scores):
-        score = emotional_score(data['sentiment'], data['intensity'])
-        print(f"{data['id']}. 评论：{msg}")
-        print(f"   情感倾向：{data['sentiment']:.2f}")
-        print(f"   情感强度：{data['intensity']:.2f}")
-        print(f"   综合得分：{score}")
+        print(f"\n{data['id']}. 评论：{msg}")
+        print("   情绪成分分析：")
+        print(f"   - 情感 (sentiment): {data['sentiment']:.2f}")
+        print(f"   - 强度 (intensity): {data['intensity']:.2f}")
 
 if __name__ == "__main__":
     # 汇总所有测试消息
     test_messages = [
-        "简直是垃圾，浪费钱！",
-        "这个产品太棒了！",
-        "质量一般，但是价格便宜",
-        "周思成和何凯文这件事，有人说最后受益者肯定不是周思成，而是渔翁得利其他老师们捡漏。还有人蹦跶出来开始撕他了，但是他本人八字从前三柱来看本身甲己合，但是今年乙巳合，对于他而言越撕名气越大。管他其他老师怎么抨击他，又开始爆料，都没用。就是越撕他越有名，该喜欢他的越来越喜欢他。翻车？不存在的。",
         "今年考研英语一机构老师们乱成一锅粥了，赶紧趁热喝了吧哈哈哈哈哈哈哈哈，数学老师也参与这场战斗了，英一事变这场闹剧到底什么时候结束呢，谁会是最后的赢家呢，让我们拭目以待！！英一出题组这下你们满意了吧哈哈哈哈哈哈哈哈哈哈哈",
         "#考研英语一##田静##何凯文# 你们两个真是能力差人品更是让人恶心 考完英语的晚上分明刷到了某位姐发的视频 说什么只是微微难 当时英语一在考场上就已经让我觉得不对劲 结果刷到视频眼泪直接哗啦啦还以为就我今年英语这么烂 好嘛！成绩出来了一个发假成绩一个找一堆理由不敢发 是牛的！水货老师们 ​ ",
         "田静 周思成 何凯文 吃瓜 群星闪耀时刻",
+        "心累了，受够这些新闻了",
         "简单理解这事，就是教育圈的'猫一杯'。猫一杯一个娱乐博主只是编造了一个小学生作业的段子，就被封杀了，而@何凯文 老师面对的是千千万万的即将接受高等教育的研究生们，孰轻孰重，所以风暴还没起来，真正的审判在酝酿中#何凯文# #何凯文上午退出考研教育下午开播收礼#"
     ]
     
